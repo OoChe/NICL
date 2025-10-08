@@ -154,6 +154,7 @@ class NaverNewsAPI:
                           category: str = None) -> Optional[Dict[str, Any]]:
         """
         네이버 API 응답 아이템을 내부 데이터 형식으로 변환
+        제목 또는 본문(description)에 키워드가 포함된 뉴스만 반환
         
         Args:
             item: 네이버 API 응답 아이템
@@ -161,7 +162,7 @@ class NaverNewsAPI:
             category: 카테고리
             
         Returns:
-            처리된 뉴스 데이터
+            처리된 뉴스 데이터 또는 None
         """
         try:
             # HTML 태그 제거
@@ -170,7 +171,21 @@ class NaverNewsAPI:
             
             # 빈 제목 필터링
             if not title.strip():
+                self.logger.debug("빈 제목으로 필터링됨")
                 return None
+            
+            # 키워드 필터링: 제목 또는 본문에 키워드가 있어야 함
+            if keyword:
+                keyword_lower = keyword.lower()
+                title_lower = title.lower()
+                description_lower = description.lower() if description else ""
+                
+                # 제목과 본문 모두에 키워드가 없으면 필터링
+                if keyword_lower not in title_lower and keyword_lower not in description_lower:
+                    self.logger.debug(f"키워드 미포함으로 필터링: {title[:50]}...")
+                    return None
+                
+                self.logger.debug(f"키워드 매칭 성공: {title[:50]}...")
             
             return {
                 'title': title,
