@@ -37,16 +37,27 @@ print()
 
 def main():
     """메인 실행 함수"""
-    parser = argparse.ArgumentParser(description='NICL 뉴스 수집 시스템')
+    parser = argparse.ArgumentParser(description='NICL 뉴스 수집 시스템 (API + 크롤링)')
     parser.add_argument('--keyword', '-k', type=str, help='검색할 키워드')
     parser.add_argument('--keywords', '-ks', nargs='+', help='여러 키워드 (공백으로 구분)')
     parser.add_argument('--count', '-c', type=int, default=50, help='수집할 뉴스 개수 (기본: 50)')
     parser.add_argument('--category', type=str, help='뉴스 카테고리')
+    parser.add_argument('--section', type=str, choices=['politics', 'economy', 'society', 'culture', 'world', 'it'],
+                       help='네이버 뉴스 섹션 (크롤링 전용)')
     parser.add_argument('--trending', '-t', action='store_true', help='인기 뉴스 수집')
     parser.add_argument('--stats', '-s', action='store_true', help='데이터베이스 통계 확인')
     parser.add_argument('--validate', '-v', action='store_true', help='설정 검증')
     
+    # 수집 방식 선택
+    parser.add_argument('--api-only', action='store_true', help='API만 사용')
+    parser.add_argument('--crawl-only', action='store_true', help='크롤링만 사용')
+    # 기본값: API + 크롤링 둘 다 사용
+    
     args = parser.parse_args()
+    
+    # 수집 방식 결정
+    use_api = not args.crawl_only
+    use_crawling = not args.api_only
     
     # 인수가 없으면 도움말 출력
     if len(sys.argv) == 1:
@@ -58,9 +69,10 @@ def main():
         with NewsCollector() as collector:
             print("=" * 60)
             print("NICL (News Information Collection & Library)")
-            print("네이버 뉴스 API 기반 뉴스 수집 시스템")
+            print("네이버 뉴스 API + 웹 크롤링 통합 수집 시스템")
             print("=" * 60)
             print(f"실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"수집 방식: {'API' if use_api else ''}{' + ' if (use_api and use_crawling) else ''}{'크롤링' if use_crawling else ''}")
             print()
             
             # 설정 검증
@@ -82,6 +94,30 @@ def main():
                 print(f"고유 뉴스: {stats.get('unique_articles', 0):,}개")
                 print(f"중복 뉴스: {stats.get('total_duplicates', 0):,}개")
                 print()
+                return
+            
+            # 섹션별 뉴스 수집 (크롤링 전용)
+            if args.section:
+                print(f"📰 네이버 뉴스 '{args.section}' 섹션 수집 중...")
+                print(f"수집 목표: {args.count}개")
+                print("-" * 40)
+                
+                result = collector.collect_news_by_section(
+                    section=args.section,
+                    max_count=args.count
+                )
+                
+                if result['success']:
+                    print("✅ 수집 완료!")
+                    print(f"📰 총 수집: {result['collected']}개")
+                    print(f"💾 저장됨: {result['saved']}개")
+                    print(f"🔄 중복: {result['duplicates']}개")
+                    print(f"⏱️ 실행 시간: {result['execution_time']:.2f}초")
+                else:
+                    print("❌ 수집 실패!")
+                    if 'error' in result:
+                        print(f"오류: {result['error']}")
+                
                 return
             
             # 인기 뉴스 수집
@@ -108,12 +144,16 @@ def main():
                 result = collector.collect_news_by_keyword(
                     keyword=args.keyword,
                     max_count=args.count,
-                    category=args.category
+                    category=args.category,
+                    use_api=use_api,
+                    use_crawling=use_crawling
                 )
                 
                 if result['success']:
                     print("✅ 수집 완료!")
                     print(f"📰 총 수집: {result['collected']}개")
+                    print(f"   ├─ API: {result.get('api_count', 0)}개")
+                    print(f"   └─ 크롤링: {result.get('crawl_count', 0)}개")
                     print(f"💾 저장됨: {result['saved']}개")
                     print(f"🔄 중복: {result['duplicates']}개")
                     print(f"⏱️ 실행 시간: {result['execution_time']:.2f}초")
@@ -133,13 +173,17 @@ def main():
                 
                 results = collector.collect_news_by_keywords(
                     keywords=args.keywords,
-                    max_count_per_keyword=args.count
+                    max_count_per_keyword=args.count,
+                    use_api=use_api,
+                    use_crawling=use_crawling
                 )
                 
                 # 결과 요약
                 total_collected = sum(r['collected'] for r in results)
                 total_saved = sum(r['saved'] for r in results)
                 total_duplicates = sum(r['duplicates'] for r in results)
+                total_api = sum(r.get('api_count', 0) for r in results)
+                total_crawl = sum(r.get('crawl_count', 0) for r in results)
                 success_count = sum(1 for r in results if r['success'])
                 
                 print("\n📊 수집 결과 요약")
@@ -147,6 +191,8 @@ def main():
                 print(f"처리된 키워드: {len(args.keywords)}개")
                 print(f"성공한 키워드: {success_count}개")
                 print(f"총 수집: {total_collected}개")
+                print(f"   ├─ API: {total_api}개")
+                print(f"   └─ 크롤링: {total_crawl}개")
                 print(f"총 저장: {total_saved}개")
                 print(f"총 중복: {total_duplicates}개")
                 
@@ -155,15 +201,24 @@ def main():
                 for result in results:
                     status = "✅" if result['success'] else "❌"
                     print(f"{status} {result['keyword']}: "
-                          f"수집={result['collected']}, 저장={result['saved']}, "
-                          f"중복={result['duplicates']}")
+                          f"수집={result['collected']} (API:{result.get('api_count',0)}, 크롤:{result.get('crawl_count',0)}), "
+                          f"저장={result['saved']}, 중복={result['duplicates']}")
                 
                 return
             
             # 기본 도움말
             print("사용 예시:")
-            print("python main.py --keyword '인공지능' --count 100")
-            print("python main.py --keywords '정치' '경제' '사회' --count 50")
+            print("\n# 기본 (API + 크롤링)")
+            print("python main.py --keyword '인공지능' --count 20")
+            print("\n# API만 사용")
+            print("python main.py --keyword '인공지능' --count 20 --api-only")
+            print("\n# 크롤링만 사용")
+            print("python main.py --keyword '인공지능' --count 20 --crawl-only")
+            print("\n# 섹션별 수집 (크롤링)")
+            print("python main.py --section politics --count 30")
+            print("\n# 다중 키워드")
+            print("python main.py --keywords '정치' '경제' '사회' --count 10")
+            print("\n# 기타")
             print("python main.py --trending --count 30")
             print("python main.py --stats")
             print("python main.py --validate")

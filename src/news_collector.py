@@ -1,6 +1,6 @@
 """
 NICL 프로젝트 - 메인 뉴스 수집기
-네이버 API와 데이터베이스를 연동한 뉴스 수집 메인 클래스
+네이버 API와 웹 크롤링을 통합한 뉴스 수집 메인 클래스
 """
 
 import time
@@ -9,11 +9,12 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from src.api.naver_news import NaverNewsAPI, NaverNewsSearchParams
+from src.crawler.news_crawler import NewsWebCrawler
 from src.database.manager import DatabaseManager
 from src.utils.config import config
 
 class NewsCollector:
-    """NICL 메인 뉴스 수집기"""
+    """NICL 메인 뉴스 수집기 (API + 크롤링 통합)"""
     
     def __init__(self):
         """뉴스 수집기 초기화"""
@@ -31,39 +32,68 @@ class NewsCollector:
             base_url=self.naver_config.base_url
         )
         
+        # 웹 크롤러 초기화
+        self.web_crawler = NewsWebCrawler(delay=self.naver_config.request_delay)
+        
         # 데이터베이스 매니저 초기화
         self.db_manager = DatabaseManager(
             db_path=config.get_full_path(self.db_config.path)
         )
         
-        self.logger.info("NICL 뉴스 수집기 초기화 완료")
+        self.logger.info("NICL 뉴스 수집기 초기화 완료 (API + 크롤링)")
     
     def collect_news_by_keyword(self, keyword: str, max_count: int = 100, 
-                               category: str = None) -> Dict[str, Any]:
+                               category: str = None, 
+                               use_api: bool = True, 
+                               use_crawling: bool = True) -> Dict[str, Any]:
         """
-        키워드로 뉴스 수집 및 데이터베이스 저장
+        키워드로 뉴스 수집 (API + 크롤링 통합)
         
         Args:
             keyword: 검색 키워드
             max_count: 수집할 최대 뉴스 개수
             category: 뉴스 카테고리
+            use_api: 네이버 API 사용 여부
+            use_crawling: 웹 크롤링 사용 여부
             
         Returns:
             수집 결과 통계
         """
         start_time = time.time()
+        all_news_data = []
         
         try:
-            self.logger.info(f"뉴스 수집 시작: 키워드='{keyword}', 최대={max_count}개")
-            
-            # 네이버 API로 뉴스 수집
-            news_data = self.naver_api.collect_news_by_keyword(
-                keyword=keyword,
-                max_count=max_count,
-                category=category
+            self.logger.info(
+                f"뉴스 수집 시작: 키워드='{keyword}', 최대={max_count}개, "
+                f"API={use_api}, 크롤링={use_crawling}"
             )
             
-            if not news_data:
+            # 각 방식별 수집 개수 분배
+            api_count = max_count // 2 if (use_api and use_crawling) else max_count
+            crawl_count = max_count - api_count if (use_api and use_crawling) else max_count
+            
+            # 1. 네이버 API로 뉴스 수집
+            if use_api:
+                self.logger.info(f"[API] 뉴스 수집 중... (목표: {api_count}개)")
+                api_news = self.naver_api.collect_news_by_keyword(
+                    keyword=keyword,
+                    max_count=api_count,
+                    category=category
+                )
+                all_news_data.extend(api_news)
+                self.logger.info(f"[API] 수집 완료: {len(api_news)}개")
+            
+            # 2. 웹 크롤링으로 뉴스 수집
+            if use_crawling:
+                self.logger.info(f"[크롤링] 뉴스 수집 중... (목표: {crawl_count}개)")
+                crawled_news = self.web_crawler.search_naver_news(
+                    keyword=keyword,
+                    max_count=crawl_count
+                )
+                all_news_data.extend(crawled_news)
+                self.logger.info(f"[크롤링] 수집 완료: {len(crawled_news)}개")
+            
+            if not all_news_data:
                 self.logger.warning(f"키워드 '{keyword}'로 수집된 뉴스가 없습니다.")
                 return {
                     'success': False,
@@ -71,17 +101,23 @@ class NewsCollector:
                     'collected': 0,
                     'saved': 0,
                     'duplicates': 0,
+                    'api_count': 0,
+                    'crawl_count': 0,
                     'execution_time': time.time() - start_time
                 }
             
             # 데이터베이스에 배치 저장
-            save_result = self.db_manager.save_news_batch(news_data)
+            save_result = self.db_manager.save_news_batch(all_news_data)
             
             execution_time = time.time() - start_time
             
+            # 소스별 통계
+            api_collected = sum(1 for n in all_news_data if n.get('source') == 'naver_api')
+            crawl_collected = sum(1 for n in all_news_data if n.get('source') == 'web_crawling')
+            
             # 수집 로그 저장
             log_data = {
-                'source': 'naver_api',
+                'source': 'api+crawling' if (use_api and use_crawling) else ('api' if use_api else 'crawling'),
                 'keyword': keyword,
                 'total_collected': save_result['saved'],
                 'duplicates_found': save_result['duplicates'],
@@ -93,16 +129,19 @@ class NewsCollector:
             result = {
                 'success': True,
                 'keyword': keyword,
-                'collected': len(news_data),
+                'collected': len(all_news_data),
                 'saved': save_result['saved'],
                 'duplicates': save_result['duplicates'],
+                'api_count': api_collected,
+                'crawl_count': crawl_collected,
                 'execution_time': execution_time
             }
             
             self.logger.info(
                 f"뉴스 수집 완료: 키워드='{keyword}', "
-                f"수집={result['collected']}개, 저장={result['saved']}개, "
-                f"중복={result['duplicates']}개, 시간={execution_time:.2f}초"
+                f"수집={result['collected']}개 (API:{api_collected}, 크롤링:{crawl_collected}), "
+                f"저장={result['saved']}개, 중복={result['duplicates']}개, "
+                f"시간={execution_time:.2f}초"
             )
             
             return result
@@ -113,7 +152,7 @@ class NewsCollector:
             
             # 에러 로그 저장
             log_data = {
-                'source': 'naver_api',
+                'source': 'api+crawling',
                 'keyword': keyword,
                 'total_collected': 0,
                 'duplicates_found': 0,
@@ -129,6 +168,8 @@ class NewsCollector:
                 'collected': 0,
                 'saved': 0,
                 'duplicates': 0,
+                'api_count': 0,
+                'crawl_count': 0,
                 'error': str(e),
                 'execution_time': execution_time
             }
