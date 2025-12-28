@@ -44,14 +44,66 @@ class NewsWebCrawler:
         
         self.logger.info("구글 뉴스 웹 크롤러 초기화 완료")
     
+    def collect_latest_news(self, max_count: int = 30, language: str = 'ko') -> List[Dict[str, Any]]:
+        """
+        구글 뉴스 메인 페이지에서 최신 뉴스 수집
+
+        Args:
+            max_count: 수집할 최대 뉴스 개수
+            language: 언어 코드 (ko: 한국어, en: 영어)
+
+        Returns:
+            수집된 뉴스 데이터 리스트
+        """
+        collected_news = []
+
+        # 구글 뉴스 메인 페이지 URL (한국)
+        base_url = "https://news.google.com/"
+
+        self.logger.info(f"구글 뉴스 최신 뉴스 크롤링 시작: 목표={max_count}개")
+
+        try:
+            params = {
+                'hl': language,
+                'gl': 'KR',
+                'ceid': 'KR:ko'
+            }
+
+            self.logger.info("구글 뉴스 메인 페이지 접속 중...")
+
+            response = self.session.get(base_url, params=params, timeout=30)
+            response.raise_for_status()
+
+            # HTML 파싱
+            soup = BeautifulSoup(response.text, 'lxml')
+
+            # 뉴스 아이템 추출 (키워드 필터링 없음)
+            news_items = self._parse_google_news_results(soup, keyword=None)
+
+            if not news_items:
+                self.logger.warning("구글 뉴스에서 최신 뉴스를 찾을 수 없습니다.")
+            else:
+                collected_news.extend(news_items[:max_count])
+                self.logger.info(f"구글 뉴스 최신 뉴스 수집 완료: {len(collected_news)}개")
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"구글 뉴스 크롤링 실패: {e}")
+        except Exception as e:
+            self.logger.error(f"구글 뉴스 처리 중 오류: {e}")
+
+        result = collected_news[:max_count]
+        self.logger.info(f"크롤링 완료: 총 {len(result)}개 수집")
+
+        return result
+
     def search_naver_news(self, keyword: str, max_count: int = 30) -> List[Dict[str, Any]]:
         """
         구글 뉴스 검색 (메서드명은 호환성을 위해 유지)
-        
+
         Args:
             keyword: 검색 키워드
             max_count: 수집할 최대 뉴스 개수
-            
+
         Returns:
             수집된 뉴스 데이터 리스트
         """
@@ -161,7 +213,7 @@ class NewsWebCrawler:
                     if not title or len(title) < 10 or title in seen_titles:
                         continue
 
-                    # 키워드 필터링
+                    # 키워드 필터링 (키워드가 있을 때만)
                     if keyword and keyword.lower() not in title.lower():
                         continue
 
@@ -180,7 +232,7 @@ class NewsWebCrawler:
                         'description': '',
                         'pub_date': datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0900'),
                         'source': 'google_crawling',
-                        'keyword': keyword,
+                        'keyword': keyword or 'latest',
                         'category': 'general',
                         'press': 'Google News'
                     })
@@ -258,7 +310,7 @@ class NewsWebCrawler:
             if not title or not link or len(title) < 10:
                 return None
 
-            # 키워드 필터링 (제목에 포함되어야 함)
+            # 키워드 필터링 (키워드가 있을 때만, 제목에 포함되어야 함)
             if keyword and keyword.lower() not in title.lower():
                 return None
 
@@ -316,7 +368,7 @@ class NewsWebCrawler:
                 'description': description,
                 'pub_date': pub_date,
                 'source': 'google_crawling',
-                'keyword': keyword,
+                'keyword': keyword or 'latest',
                 'category': 'general',
                 'press': press
             }

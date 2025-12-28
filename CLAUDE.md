@@ -6,11 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-NICL (News Information Collection & Library) is a Korean news aggregation system that combines:
-- Naver News API for structured news data
-- Google News web crawling for broader coverage
-- SQLite database for storage with automatic deduplication
-- Unified CLI interface for news collection
+NICL (News Information Collection & Library) is a Korean news aggregation system that focuses on:
+- **Primary Feature**: Automatic latest news collection (without keywords)
+- **Secondary Feature**: Keyword-based news search and collection
+- **Data Sources**: Naver News API + Google News web crawling
+- **Storage**: SQLite database with automatic deduplication
+- **Interface**: Unified CLI with latest news as default behavior
 
 ## Essential Commands
 
@@ -30,15 +31,35 @@ NAVER_CLIENT_SECRET=your_client_secret
 ```
 
 ### Running the Application
+
+#### Primary Feature: Latest News Collection
 ```bash
-# Basic usage (API + crawling)
+# Default behavior - collects 50 latest news
+python main.py
+
+# Explicit latest news collection
+python main.py --latest
+python main.py -l
+
+# Specify count
+python main.py --latest --count 100
+python main.py -l -c 100
+
+# Choose collection method
+python main.py --latest --api-only      # API only
+python main.py --latest --crawl-only    # Crawling only
+python main.py --latest                 # Both (default)
+```
+
+#### Secondary Feature: Keyword-based Collection
+```bash
+# Single keyword
 python main.py --keyword "인공지능" --count 20
+python main.py -k "ChatGPT" -c 30
 
-# API only
-python main.py --keyword "ChatGPT" --count 30 --api-only
-
-# Crawling only
-python main.py --keyword "ChatGPT" --count 30 --crawl-only
+# API or crawling only
+python main.py -k "ChatGPT" --count 30 --api-only
+python main.py -k "ChatGPT" --count 30 --crawl-only
 
 # Multiple keywords
 python main.py --keywords "정치" "경제" "사회" --count 10
@@ -46,6 +67,12 @@ python main.py --keywords "정치" "경제" "사회" --count 10
 # Section-based collection
 python main.py --section politics --count 30
 
+# Trending news
+python main.py --trending --count 20
+```
+
+#### Utilities
+```bash
 # Database statistics
 python main.py --stats
 
@@ -66,7 +93,14 @@ python main.py --validate
 
 ### Key Design Patterns
 
-**Dual-Source Collection**: When both API and crawling are enabled, `NewsCollector.collect_news_by_keyword()` splits the target count evenly between sources (e.g., 50 total = 25 API + 25 crawling). Each source adds a `source` field to distinguish origin.
+**Primary Feature Focus**: The system defaults to latest news collection when no arguments are provided. `NewsCollector.collect_latest_news()` is the main entry point, using general keywords ('뉴스', '한국', '속보') with keyword filtering disabled.
+
+**Dual-Source Collection**: Both `collect_latest_news()` and `collect_news_by_keyword()` split the target count evenly between sources (e.g., 50 total = 25 API + 25 crawling). Each source adds a `source` field to distinguish origin.
+
+**Keyword Filtering Toggle**:
+- Latest news collection: Uses `filter_keyword=False` in API to avoid keyword restrictions
+- Keyword-based collection: Uses `filter_keyword=True` to ensure relevance
+- The `_process_news_item()` method in NaverNewsAPI respects this flag
 
 **Deduplication**: The `DatabaseManager` checks `original_link` before inserting. Duplicates are silently skipped and counted but not saved. Existing duplicates get `is_duplicate=True` flag.
 
@@ -85,31 +119,40 @@ python main.py --validate
 **CollectionLog** table:
 - Logs each collection run with `source`, `keyword`, `total_collected`, `duplicates_found`, `success`, `error_message`, `execution_time`
 
-### Web Scraping
-
-The `NewsWebCrawler` targets Google News (not Naver despite method naming for backward compatibility). Key selectors in [src/crawler/news_crawler.py](src/crawler/news_crawler.py):
-- **Articles**: Tries multiple selectors (`article`, `div.xrnccd`, etc.) and falls back to link extraction
-- **Titles**: Tries `a.gPFEn`, `a.JtKRv`, `h3 a`, `a[href*="./articles/"]`
-- **Press**: Extracts from `div.vr1PYe`, `span.vr1PYe`, etc.
-
-Google News selectors change frequently. If crawling fails, check and update selectors in `_parse_google_news_results()` and `_extract_google_news_data()`.
 
 ### API Integration
 
 Naver News API ([src/api/naver_news.py](src/api/naver_news.py)):
 - Requires `X-Naver-Client-Id` and `X-Naver-Client-Secret` headers
 - Limits: 100 results per request, 1000 total per query
-- Keyword filtering: `_process_news_item()` checks if keyword appears in title or description (case-insensitive)
+- **Latest news collection**: `collect_latest_news()` uses general keywords with `filter_keyword=False`
+- **Keyword-based collection**: `collect_news_by_keyword()` with `filter_keyword=True` (default)
+- Keyword filtering: `_process_news_item()` checks if keyword appears in title or description (case-insensitive) when `filter_keyword=True`
 - HTML cleanup: Removes tags like `<b>`, converts entities (`&amp;` → `&`)
+
+### Web Crawling
+
+The `NewsWebCrawler` ([src/crawler/news_crawler.py](src/crawler/news_crawler.py)) targets Google News:
+- **Latest news**: `collect_latest_news()` crawls Google News main page without keyword filtering
+- **Keyword search**: `search_google_news()` searches with specific keywords
+- Selectors change frequently - update `_parse_google_news_results()` and `_extract_google_news_data()` as needed
+- **Articles**: Tries multiple selectors (`article`, `div.xrnccd`, etc.) and falls back to link extraction
+- **Titles**: Tries `a.gPFEn`, `a.JtKRv`, `h3 a`, `a[href*="./articles/"]`
+- **Press**: Extracts from `div.vr1PYe`, `span.vr1PYe`, etc.
 
 ## Working with This Codebase
 
 ### Adding New Data Sources
 
 1. Create a new module in `src/api/` or `src/crawler/`
-2. Implement a collection method returning `List[Dict[str, Any]]` with keys: `title`, `original_link`, `link`, `description`, `pub_date`, `source`, `keyword`, `category`
-3. Update `NewsCollector.collect_news_by_keyword()` to integrate the new source
-4. Update `main.py` to add CLI flags if needed
+2. Implement collection methods:
+   - `collect_latest_news(max_count)`: For general latest news
+   - `collect_news_by_keyword(keyword, max_count)`: For keyword-based search
+3. Return `List[Dict[str, Any]]` with keys: `title`, `original_link`, `link`, `description`, `pub_date`, `source`, `keyword`, `category`
+4. Update `NewsCollector`:
+   - Add new source to `collect_latest_news()` for general news
+   - Add new source to `collect_news_by_keyword()` for keyword search
+5. Update `main.py` to add CLI flags if needed
 
 ### Database Schema Changes
 

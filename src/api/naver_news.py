@@ -90,29 +90,82 @@ class NaverNewsAPI:
             self.logger.error(f"네이버 뉴스 검색 중 오류: {e}")
             return {'items': [], 'total': 0, 'start': 1, 'display': 0}
     
-    def collect_news_by_keyword(self, keyword: str, max_count: int = 100, 
-                               category: str = None) -> List[Dict[str, Any]]:
+    def collect_latest_news(self, max_count: int = 100, category: str = None) -> List[Dict[str, Any]]:
+        """
+        최신 뉴스 수집 (키워드 없이 일반 뉴스 수집)
+
+        Args:
+            max_count: 수집할 최대 뉴스 개수
+            category: 뉴스 카테고리 (선택)
+
+        Returns:
+            수집된 뉴스 데이터 리스트
+        """
+        # 일반적인 뉴스 키워드로 최신 뉴스 수집
+        general_keywords = ['뉴스', '한국', '속보']
+        collected_news = []
+
+        self.logger.info(f"최신 뉴스 수집 시작 (최대 {max_count}개)")
+
+        # 여러 키워드로 분산 수집하여 다양성 확보
+        count_per_keyword = max_count // len(general_keywords)
+
+        for keyword in general_keywords:
+            news_list = self.collect_news_by_keyword(
+                keyword=keyword,
+                max_count=count_per_keyword,
+                category=category,
+                filter_keyword=False  # 키워드 필터링 비활성화
+            )
+            collected_news.extend(news_list)
+
+            if len(collected_news) >= max_count:
+                break
+
+        # 중복 제거 (original_link 기준)
+        seen_links = set()
+        unique_news = []
+        for news in collected_news:
+            link = news.get('original_link')
+            if link and link not in seen_links:
+                seen_links.add(link)
+                unique_news.append(news)
+
+        result = unique_news[:max_count]
+        self.logger.info(f"최신 뉴스 수집 완료: {len(result)}개")
+        return result
+
+    def collect_news_by_keyword(self, keyword: str, max_count: int = 100,
+                               category: str = None, filter_keyword: bool = True) -> List[Dict[str, Any]]:
         """
         키워드로 뉴스 수집
-        
+
         Args:
             keyword: 검색 키워드
             max_count: 수집할 최대 뉴스 개수
             category: 뉴스 카테고리 (선택)
-            
+            filter_keyword: 키워드 필터링 활성화 여부 (기본: True)
+
         Returns:
             수집된 뉴스 데이터 리스트
         """
         collected_news = []
         total_collected = 0
         current_start = 1
-        
-        self.logger.info(f"키워드 '{keyword}' 뉴스 수집 시작 (최대 {max_count}개)")
-        
-        while total_collected < max_count:
-            # 한 번에 가져올 개수 계산
-            display_count = min(100, max_count - total_collected)
-            
+        consecutive_no_results = 0  # 연속으로 결과가 없는 횟수
+
+        self.logger.info(f"키워드 '{keyword}' 뉴스 수집 시작 (최대 {max_count}개, 필터링: {filter_keyword})")
+
+        while total_collected < max_count and current_start <= 1000:
+            # 부족한 개수 계산 (필터링을 고려하여 여유있게 요청)
+            remaining = max_count - total_collected
+
+            # 필터링이 활성화된 경우 더 많이 요청 (약 50% 여유)
+            if filter_keyword:
+                display_count = min(100, int(remaining * 1.5))
+            else:
+                display_count = min(100, remaining)
+
             # 검색 파라미터 설정
             params = NaverNewsSearchParams(
                 query=keyword,
@@ -120,47 +173,69 @@ class NaverNewsAPI:
                 start=current_start,
                 sort='date'
             )
-            
+
             # 뉴스 검색
             result = self.search_news(params)
             items = result.get('items', [])
-            
+
             if not items:
                 self.logger.info("더 이상 검색 결과가 없습니다.")
                 break
-            
+
+            # 이번 배치에서 수집된 개수 추적
+            batch_collected = 0
+
             # 뉴스 데이터 처리
             for item in items:
-                processed_news = self._process_news_item(item, keyword, category)
+                # 목표 개수 도달 시 중단
+                if total_collected >= max_count:
+                    break
+
+                processed_news = self._process_news_item(item, keyword, category, filter_keyword)
                 if processed_news:
                     collected_news.append(processed_news)
                     total_collected += 1
-            
-            # 다음 페이지 준비
-            current_start += display_count
-            
+                    batch_collected += 1
+
+            # 이번 배치에서 수집된 게 없으면 연속 카운트 증가
+            if batch_collected == 0:
+                consecutive_no_results += 1
+                self.logger.debug(f"이번 배치에서 수집 없음 (연속 {consecutive_no_results}회)")
+
+                # 3회 연속 수집 실패 시 중단
+                if consecutive_no_results >= 3:
+                    self.logger.warning("연속 3회 수집 실패로 중단합니다.")
+                    break
+            else:
+                # 수집 성공 시 카운트 리셋
+                consecutive_no_results = 0
+                self.logger.debug(f"이번 배치 수집: {batch_collected}개 (누적: {total_collected}/{max_count})")
+
+            # 다음 페이지 준비 (실제 받은 아이템 수만큼 증가)
+            current_start += len(items)
+
             # API 호출 제한 고려 (1초 대기)
             time.sleep(1.0)
-            
-            # 검색 한계 확인 (네이버 API는 1000개까지만 지원)
-            if current_start > 1000:
-                self.logger.warning("네이버 API 검색 한계에 도달했습니다 (1000개)")
-                break
-        
-        self.logger.info(f"키워드 '{keyword}' 수집 완료: {len(collected_news)}개")
+
+        self.logger.info(f"키워드 '{keyword}' 수집 완료: {len(collected_news)}개 (목표: {max_count}개)")
+
+        # 목표 개수에 미달한 경우 경고 로그
+        if len(collected_news) < max_count:
+            self.logger.warning(f"목표 개수 미달: {len(collected_news)}/{max_count}개 수집")
+
         return collected_news
     
-    def _process_news_item(self, item: Dict[str, Any], keyword: str, 
-                          category: str = None) -> Optional[Dict[str, Any]]:
+    def _process_news_item(self, item: Dict[str, Any], keyword: str,
+                          category: str = None, filter_keyword: bool = True) -> Optional[Dict[str, Any]]:
         """
         네이버 API 응답 아이템을 내부 데이터 형식으로 변환
-        제목 또는 본문(description)에 키워드가 포함된 뉴스만 반환
-        
+
         Args:
             item: 네이버 API 응답 아이템
             keyword: 검색 키워드
             category: 카테고리
-            
+            filter_keyword: 키워드 필터링 활성화 여부
+
         Returns:
             처리된 뉴스 데이터 또는 None
         """
@@ -168,25 +243,25 @@ class NaverNewsAPI:
             # HTML 태그 제거
             title = self._clean_html_tags(item.get('title', ''))
             description = self._clean_html_tags(item.get('description', ''))
-            
+
             # 빈 제목 필터링
             if not title.strip():
                 self.logger.debug("빈 제목으로 필터링됨")
                 return None
-            
-            # 키워드 필터링: 제목 또는 본문에 키워드가 있어야 함
-            if keyword:
+
+            # 키워드 필터링: 제목 또는 본문에 키워드가 있어야 함 (filter_keyword가 True일 때만)
+            if filter_keyword and keyword:
                 keyword_lower = keyword.lower()
                 title_lower = title.lower()
                 description_lower = description.lower() if description else ""
-                
+
                 # 제목과 본문 모두에 키워드가 없으면 필터링
                 if keyword_lower not in title_lower and keyword_lower not in description_lower:
                     self.logger.debug(f"키워드 미포함으로 필터링: {title[:50]}...")
                     return None
-                
+
                 self.logger.debug(f"키워드 매칭 성공: {title[:50]}...")
-            
+
             return {
                 'title': title,
                 'original_link': item.get('originallink', ''),
@@ -194,10 +269,10 @@ class NaverNewsAPI:
                 'description': description,
                 'pub_date': item.get('pubDate', ''),
                 'source': 'naver_api',
-                'keyword': keyword,
+                'keyword': keyword if filter_keyword else 'latest',
                 'category': category or 'general'
             }
-            
+
         except Exception as e:
             self.logger.error(f"뉴스 아이템 처리 중 오류: {e}")
             return None

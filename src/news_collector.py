@@ -41,7 +41,126 @@ class NewsCollector:
         )
         
         self.logger.info("NICL 뉴스 수집기 초기화 완료 (API + 크롤링)")
-    
+
+    def collect_latest_news(self, max_count: int = 100,
+                          use_api: bool = True,
+                          use_crawling: bool = True) -> Dict[str, Any]:
+        """
+        최신 뉴스 수집 (키워드 없이 일반 최신 뉴스)
+
+        Args:
+            max_count: 수집할 최대 뉴스 개수
+            use_api: 네이버 API 사용 여부
+            use_crawling: 웹 크롤링 사용 여부
+
+        Returns:
+            수집 결과 통계
+        """
+        start_time = time.time()
+        all_news_data = []
+
+        try:
+            self.logger.info(
+                f"최신 뉴스 수집 시작: 최대={max_count}개, "
+                f"API={use_api}, 크롤링={use_crawling}"
+            )
+
+            # 각 방식별 수집 개수 분배
+            api_count = max_count // 2 if (use_api and use_crawling) else max_count
+            crawl_count = max_count - api_count if (use_api and use_crawling) else max_count
+
+            # 1. 네이버 API로 최신 뉴스 수집
+            if use_api:
+                self.logger.info(f"[API] 최신 뉴스 수집 중... (목표: {api_count}개)")
+                api_news = self.naver_api.collect_latest_news(max_count=api_count)
+                all_news_data.extend(api_news)
+                self.logger.info(f"[API] 수집 완료: {len(api_news)}개")
+
+            # 2. 웹 크롤링으로 최신 뉴스 수집
+            if use_crawling:
+                self.logger.info(f"[크롤링] 최신 뉴스 수집 중... (목표: {crawl_count}개)")
+                crawled_news = self.web_crawler.collect_latest_news(max_count=crawl_count)
+                all_news_data.extend(crawled_news)
+                self.logger.info(f"[크롤링] 수집 완료: {len(crawled_news)}개")
+
+            if not all_news_data:
+                self.logger.warning("수집된 최신 뉴스가 없습니다.")
+                return {
+                    'success': False,
+                    'collected': 0,
+                    'saved': 0,
+                    'duplicates': 0,
+                    'api_count': 0,
+                    'crawl_count': 0,
+                    'execution_time': time.time() - start_time
+                }
+
+            # 데이터베이스에 배치 저장
+            save_result = self.db_manager.save_news_batch(all_news_data)
+
+            execution_time = time.time() - start_time
+
+            # 소스별 통계
+            api_collected = sum(1 for n in all_news_data if n.get('source') == 'naver_api')
+            crawl_collected = sum(1 for n in all_news_data if n.get('source') in ['web_crawling', 'google_crawling'])
+
+            # 수집 로그 저장
+            log_data = {
+                'source': 'api+crawling' if (use_api and use_crawling) else ('api' if use_api else 'crawling'),
+                'keyword': 'latest',
+                'total_collected': save_result['saved'],
+                'duplicates_found': save_result['duplicates'],
+                'success': True,
+                'execution_time': int(execution_time)
+            }
+            self.db_manager.log_collection(log_data)
+
+            result = {
+                'success': True,
+                'collected': len(all_news_data),
+                'saved': save_result['saved'],
+                'duplicates': save_result['duplicates'],
+                'api_count': api_collected,
+                'crawl_count': crawl_collected,
+                'execution_time': execution_time
+            }
+
+            self.logger.info(
+                f"최신 뉴스 수집 완료: "
+                f"수집={result['collected']}개 (API:{api_collected}, 크롤링:{crawl_collected}), "
+                f"저장={result['saved']}개, 중복={result['duplicates']}개, "
+                f"시간={execution_time:.2f}초"
+            )
+
+            return result
+
+        except Exception as e:
+            execution_time = time.time() - start_time
+            self.logger.error(f"최신 뉴스 수집 중 오류 발생: {e}")
+
+            # 에러 로그 저장
+            log_data = {
+                'source': 'api+crawling',
+                'keyword': 'latest',
+                'total_collected': 0,
+                'duplicates_found': 0,
+                'success': False,
+                'error_message': str(e),
+                'execution_time': int(execution_time)
+            }
+            self.db_manager.log_collection(log_data)
+
+            return {
+                'success': False,
+                'collected': 0,
+                'saved': 0,
+                'duplicates': 0,
+                'api_count': 0,
+                'crawl_count': 0,
+                'error': str(e),
+                'execution_time': execution_time
+            }
+
     def collect_news_by_keyword(self, keyword: str, max_count: int = 100, 
                                category: str = None, 
                                use_api: bool = True, 

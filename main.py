@@ -37,44 +37,53 @@ print()
 
 def main():
     """메인 실행 함수"""
-    parser = argparse.ArgumentParser(description='NICL 뉴스 수집 시스템 (API + 크롤링)')
-    parser.add_argument('--keyword', '-k', type=str, help='검색할 키워드')
-    parser.add_argument('--keywords', '-ks', nargs='+', help='여러 키워드 (공백으로 구분)')
+    parser = argparse.ArgumentParser(description='NICL 최신 뉴스 수집 시스템 (API + 크롤링)')
+
+    # 메인 기능: 최신 뉴스 수집
+    parser.add_argument('--latest', '-l', action='store_true', help='최신 뉴스 수집 (메인 기능)')
     parser.add_argument('--count', '-c', type=int, default=50, help='수집할 뉴스 개수 (기본: 50)')
+
+    # 부가 기능: 키워드 기반 수집
+    parser.add_argument('--keyword', '-k', type=str, help='키워드로 뉴스 검색')
+    parser.add_argument('--keywords', '-ks', nargs='+', help='여러 키워드로 뉴스 검색 (공백으로 구분)')
     parser.add_argument('--category', type=str, help='뉴스 카테고리')
     parser.add_argument('--section', type=str, choices=['politics', 'economy', 'society', 'culture', 'world', 'it'],
-                       help='네이버 뉴스 섹션 (크롤링 전용)')
+                       help='뉴스 섹션별 수집')
     parser.add_argument('--trending', '-t', action='store_true', help='인기 뉴스 수집')
+
+    # 유틸리티
     parser.add_argument('--stats', '-s', action='store_true', help='데이터베이스 통계 확인')
     parser.add_argument('--validate', '-v', action='store_true', help='설정 검증')
-    
+
     # 수집 방식 선택
     parser.add_argument('--api-only', action='store_true', help='API만 사용')
     parser.add_argument('--crawl-only', action='store_true', help='크롤링만 사용')
     # 기본값: API + 크롤링 둘 다 사용
-    
+
     args = parser.parse_args()
     
     # 수집 방식 결정
     use_api = not args.crawl_only
     use_crawling = not args.api_only
     
-    # 인수가 없으면 도움말 출력
+    # 인수가 없으면 최신 뉴스 수집 (기본 동작)
     if len(sys.argv) == 1:
-        parser.print_help()
-        return
-    
+        args.latest = True
+        print("인수가 없으므로 최신 뉴스 수집을 시작합니다.")
+        print("자세한 사용법은 'python main.py --help'를 참고하세요.")
+        print()
+
     # 뉴스 수집기 초기화
     try:
         with NewsCollector() as collector:
             print("=" * 60)
             print("NICL (News Information Collection & Library)")
-            print("네이버 뉴스 API + 웹 크롤링 통합 수집 시스템")
+            print("최신 뉴스 수집 시스템 (API + 웹 크롤링)")
             print("=" * 60)
             print(f"실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"수집 방식: {'API' if use_api else ''}{' + ' if (use_api and use_crawling) else ''}{'크롤링' if use_crawling else ''}")
             print()
-            
+
             # 설정 검증
             if args.validate:
                 print("🔍 설정 검증 중...")
@@ -89,14 +98,41 @@ def main():
                 print("📊 데이터베이스 통계")
                 print("-" * 30)
                 stats = collector.get_database_statistics()
-                
+
                 print(f"총 뉴스 기사: {stats.get('total_articles', 0):,}개")
                 print(f"고유 뉴스: {stats.get('unique_articles', 0):,}개")
                 print(f"중복 뉴스: {stats.get('total_duplicates', 0):,}개")
                 print()
                 return
-            
-            # 섹션별 뉴스 수집 (크롤링 전용)
+
+            # 최신 뉴스 수집 (메인 기능)
+            if args.latest:
+                print("📰 최신 뉴스 수집 중...")
+                print(f"수집 목표: {args.count}개")
+                print("-" * 40)
+
+                result = collector.collect_latest_news(
+                    max_count=args.count,
+                    use_api=use_api,
+                    use_crawling=use_crawling
+                )
+
+                if result['success']:
+                    print("✅ 수집 완료!")
+                    print(f"📰 총 수집: {result['collected']}개")
+                    print(f"   ├─ API: {result.get('api_count', 0)}개")
+                    print(f"   └─ 크롤링: {result.get('crawl_count', 0)}개")
+                    print(f"💾 저장됨: {result['saved']}개")
+                    print(f"🔄 중복: {result['duplicates']}개")
+                    print(f"⏱️ 실행 시간: {result['execution_time']:.2f}초")
+                else:
+                    print("❌ 수집 실패!")
+                    if 'error' in result:
+                        print(f"오류: {result['error']}")
+
+                return
+
+            # 섹션별 뉴스 수집
             if args.section:
                 print(f"📰 네이버 뉴스 '{args.section}' 섹션 수집 중...")
                 print(f"수집 목표: {args.count}개")
@@ -208,20 +244,23 @@ def main():
             
             # 기본 도움말
             print("사용 예시:")
-            print("\n# 기본 (API + 크롤링)")
+            print("\n[메인 기능 - 최신 뉴스 수집]")
+            print("python main.py                    # 최신 뉴스 50개 수집 (기본)")
+            print("python main.py --latest           # 최신 뉴스 수집")
+            print("python main.py -l --count 100     # 최신 뉴스 100개 수집")
+            print("python main.py -l --api-only      # API만 사용하여 최신 뉴스 수집")
+            print("python main.py -l --crawl-only    # 크롤링만 사용하여 최신 뉴스 수집")
+
+            print("\n[부가 기능 - 키워드 기반 수집]")
             print("python main.py --keyword '인공지능' --count 20")
-            print("\n# API만 사용")
-            print("python main.py --keyword '인공지능' --count 20 --api-only")
-            print("\n# 크롤링만 사용")
-            print("python main.py --keyword '인공지능' --count 20 --crawl-only")
-            print("\n# 섹션별 수집 (크롤링)")
-            print("python main.py --section politics --count 30")
-            print("\n# 다중 키워드")
+            print("python main.py -k '챗GPT' -c 30 --api-only")
             print("python main.py --keywords '정치' '경제' '사회' --count 10")
-            print("\n# 기타")
+            print("python main.py --section politics --count 30")
             print("python main.py --trending --count 30")
-            print("python main.py --stats")
-            print("python main.py --validate")
+
+            print("\n[유틸리티]")
+            print("python main.py --stats            # 데이터베이스 통계")
+            print("python main.py --validate         # 설정 검증")
             
     except KeyboardInterrupt:
         print("\n⏹️ 사용자에 의해 중단되었습니다.")
