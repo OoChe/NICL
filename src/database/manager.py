@@ -5,7 +5,9 @@ SQLite 데이터베이스 연결 및 관리
 
 import os
 import logging
-from typing import List, Optional, Dict, Any
+import time
+from typing import List, Optional, Dict, Any, Set
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -35,23 +37,26 @@ class DatabaseManager:
         try:
             # 데이터베이스 디렉토리 생성
             os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-            
+
             # SQLite 엔진 생성
             self.engine = create_engine(
                 f'sqlite:///{self.db_path}',
                 echo=False,  # SQL 쿼리 로그 출력 여부
                 pool_recycle=3600,
-                connect_args={'check_same_thread': False}
+                connect_args={
+                    'check_same_thread': False,
+                    'timeout': 30  # 30초 타임아웃 (엣지 케이스 9)
+                }
             )
-            
+
             # 세션 팩토리 생성
             self.SessionLocal = sessionmaker(bind=self.engine)
-            
+
             # 테이블 생성
             Base.metadata.create_all(bind=self.engine)
-            
+
             self.logger.info(f"데이터베이스 연결 성공: {self.db_path}")
-            
+
         except Exception as e:
             self.logger.error(f"데이터베이스 초기화 실패: {e}")
             raise
@@ -221,6 +226,59 @@ class DatabaseManager:
             self.logger.error(f"통계 조회 실패: {e}")
             return {}
     
+    def get_recent_links(self, minutes_ago: int = 2, max_records: int = 500) -> Set[str]:
+        """
+        최근 수집된 뉴스 링크 조회 (중복 방지용 캐시)
+
+        Args:
+            minutes_ago: 조회할 시간 범위 (분 단위, 기본 2분)
+            max_records: 최대 레코드 수 제한 (메모리 보호, 엣지 케이스 4)
+
+        Returns:
+            original_link 집합 (Set)
+        """
+        max_retries = 3
+        retry_delay = 1  # 초
+
+        for attempt in range(max_retries):
+            try:
+                with self.get_session() as session:
+                    cutoff_time = datetime.now() - timedelta(minutes=minutes_ago)
+
+                    # 시간 기반 조회 (최근 N분)
+                    articles = session.query(NewsArticle.original_link)\
+                        .filter(NewsArticle.created_at >= cutoff_time)\
+                        .limit(max_records)\
+                        .all()
+
+                    result = {article[0] for article in articles if article[0]}
+
+                    self.logger.info(
+                        f"캐시 조회 성공: {len(result)}개 링크 "
+                        f"(최근 {minutes_ago}분, 최대 {max_records}개)"
+                    )
+
+                    return result
+
+            except SQLAlchemyError as e:
+                self.logger.warning(
+                    f"캐시 조회 실패 (시도 {attempt + 1}/{max_retries}): {e}"
+                )
+
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                else:
+                    self.logger.error(
+                        "캐시 조회 최종 실패 - 빈 캐시 반환 (중복 가능성 있음)"
+                    )
+                    return set()
+
+            except Exception as e:
+                self.logger.error(f"캐시 조회 중 예상치 못한 오류: {e}")
+                return set()
+
+        return set()
+
     def close(self):
         """데이터베이스 연결 종료"""
         if self.engine:

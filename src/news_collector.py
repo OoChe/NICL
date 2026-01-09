@@ -65,6 +65,13 @@ class NewsCollector:
                 f"API={use_api}, 크롤링={use_crawling}"
             )
 
+            # 최근 수집된 뉴스 링크 캐시 조회 (중복 방지)
+            recent_links = self.db_manager.get_recent_links(
+                minutes_ago=2,  # 2분 버퍼 (15초 주기 고려)
+                max_records=500  # 메모리 보호 (엣지 케이스 4)
+            )
+            self.logger.info(f"중복 방지 캐시: {len(recent_links)}개 링크 로드")
+
             # 각 방식별 수집 개수 분배
             api_count = max_count // 2 if (use_api and use_crawling) else max_count
             crawl_count = max_count - api_count if (use_api and use_crawling) else max_count
@@ -72,14 +79,20 @@ class NewsCollector:
             # 1. 네이버 API로 최신 뉴스 수집
             if use_api:
                 self.logger.info(f"[API] 최신 뉴스 수집 중... (목표: {api_count}개)")
-                api_news = self.naver_api.collect_latest_news(max_count=api_count)
+                api_news = self.naver_api.collect_latest_news(
+                    max_count=api_count,
+                    exclude_links=recent_links  # 캐시 전달
+                )
                 all_news_data.extend(api_news)
                 self.logger.info(f"[API] 수집 완료: {len(api_news)}개")
 
             # 2. 웹 크롤링으로 최신 뉴스 수집
             if use_crawling:
                 self.logger.info(f"[크롤링] 최신 뉴스 수집 중... (목표: {crawl_count}개)")
-                crawled_news = self.web_crawler.collect_latest_news(max_count=crawl_count)
+                crawled_news = self.web_crawler.collect_latest_news(
+                    max_count=crawl_count,
+                    exclude_links=recent_links  # 캐시 전달
+                )
                 all_news_data.extend(crawled_news)
                 self.logger.info(f"[크롤링] 수집 완료: {len(crawled_news)}개")
 

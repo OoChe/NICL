@@ -6,7 +6,7 @@ NICL 프로젝트 - 웹 크롤링 모듈
 import time
 import logging
 import requests
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from datetime import datetime
 from urllib.parse import quote, urljoin
 from bs4 import BeautifulSoup
@@ -44,23 +44,28 @@ class NewsWebCrawler:
         
         self.logger.info("구글 뉴스 웹 크롤러 초기화 완료")
     
-    def collect_latest_news(self, max_count: int = 30, language: str = 'ko') -> List[Dict[str, Any]]:
+    def collect_latest_news(self, max_count: int = 30, language: str = 'ko',
+                           exclude_links: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
         """
         구글 뉴스 메인 페이지에서 최신 뉴스 수집
 
         Args:
             max_count: 수집할 최대 뉴스 개수
             language: 언어 코드 (ko: 한국어, en: 영어)
+            exclude_links: 제외할 링크 집합 (중복 방지 캐시)
 
         Returns:
             수집된 뉴스 데이터 리스트
         """
         collected_news = []
 
+        if exclude_links is None:
+            exclude_links = set()
+
         # 구글 뉴스 메인 페이지 URL (한국)
         base_url = "https://news.google.com/"
 
-        self.logger.info(f"구글 뉴스 최신 뉴스 크롤링 시작: 목표={max_count}개")
+        self.logger.info(f"구글 뉴스 최신 뉴스 크롤링 시작: 목표={max_count}개, 캐시 제외 {len(exclude_links)}개")
 
         try:
             params = {
@@ -78,7 +83,7 @@ class NewsWebCrawler:
             soup = BeautifulSoup(response.text, 'lxml')
 
             # 뉴스 아이템 추출 (키워드 필터링 없음)
-            news_items = self._parse_google_news_results(soup, keyword=None)
+            news_items = self._parse_google_news_results(soup, keyword=None, exclude_links=exclude_links)
 
             if not news_items:
                 self.logger.warning("구글 뉴스에서 최신 뉴스를 찾을 수 없습니다.")
@@ -109,24 +114,29 @@ class NewsWebCrawler:
         """
         return self.search_google_news(keyword, max_count)
     
-    def search_google_news(self, keyword: str, max_count: int = 30, language: str = 'ko') -> List[Dict[str, Any]]:
+    def search_google_news(self, keyword: str, max_count: int = 30, language: str = 'ko',
+                          exclude_links: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
         """
         구글 뉴스 검색 결과 크롤링
-        
+
         Args:
             keyword: 검색 키워드
             max_count: 수집할 최대 뉴스 개수
             language: 언어 코드 (ko: 한국어, en: 영어)
-            
+            exclude_links: 제외할 링크 집합 (중복 방지 캐시)
+
         Returns:
             수집된 뉴스 데이터 리스트
         """
         collected_news = []
-        
+
+        if exclude_links is None:
+            exclude_links = set()
+
         # 구글 뉴스 검색 URL
         base_url = "https://news.google.com/search"
-        
-        self.logger.info(f"구글 뉴스 크롤링 시작: 키워드='{keyword}', 목표={max_count}개")
+
+        self.logger.info(f"구글 뉴스 크롤링 시작: 키워드='{keyword}', 목표={max_count}개, 캐시 제외 {len(exclude_links)}개")
         
         try:
             # 한국 뉴스로 제한
@@ -144,10 +154,10 @@ class NewsWebCrawler:
             
             # HTML 파싱
             soup = BeautifulSoup(response.text, 'lxml')
-            
+
             # 뉴스 아이템 추출
-            news_items = self._parse_google_news_results(soup, keyword)
-            
+            news_items = self._parse_google_news_results(soup, keyword, exclude_links=exclude_links)
+
             if not news_items:
                 self.logger.warning(f"구글 뉴스에서 '{keyword}' 검색 결과를 찾을 수 없습니다.")
             else:
@@ -164,18 +174,24 @@ class NewsWebCrawler:
         
         return result
     
-    def _parse_google_news_results(self, soup: BeautifulSoup, keyword: str) -> List[Dict[str, Any]]:
+    def _parse_google_news_results(self, soup: BeautifulSoup, keyword: str,
+                                   exclude_links: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
         """
         구글 뉴스 검색 결과에서 뉴스 데이터 추출
 
         Args:
             soup: BeautifulSoup 객체
             keyword: 검색 키워드
+            exclude_links: 제외할 링크 집합 (중복 방지 캐시)
 
         Returns:
             뉴스 데이터 리스트
         """
         news_list = []
+        filtered_by_cache = 0
+
+        if exclude_links is None:
+            exclude_links = set()
 
         # 구글 뉴스 아티클 선택자 (여러 선택자 시도)
         article_selectors = [
@@ -217,13 +233,19 @@ class NewsWebCrawler:
                     if keyword and keyword.lower() not in title.lower():
                         continue
 
-                    seen_titles.add(title)
-
                     # 링크 정규화
                     if href.startswith('./'):
                         href = 'https://news.google.com' + href[1:]
                     elif not href.startswith('http'):
                         href = 'https://news.google.com' + href
+
+                    # 캐시 기반 필터링 (엣지 케이스 3, 4 대응)
+                    if href in exclude_links:
+                        filtered_by_cache += 1
+                        self.logger.debug(f"캐시로 필터링됨: {href}")
+                        continue
+
+                    seen_titles.add(title)
 
                     news_list.append({
                         'title': title,
@@ -241,7 +263,7 @@ class NewsWebCrawler:
                     self.logger.debug(f"링크 처리 오류: {e}")
                     continue
 
-            self.logger.info(f"링크 기반 추출로 {len(news_list)}개 수집")
+            self.logger.info(f"링크 기반 추출로 {len(news_list)}개 수집 (캐시 필터링: {filtered_by_cache}개)")
             return news_list
 
         # article 태그로 추출
@@ -249,11 +271,17 @@ class NewsWebCrawler:
             try:
                 news_data = self._extract_google_news_data(article, keyword)
                 if news_data:
+                    # 캐시 기반 필터링
+                    if news_data.get('original_link') in exclude_links:
+                        filtered_by_cache += 1
+                        self.logger.debug(f"캐시로 필터링됨: {news_data.get('original_link')}")
+                        continue
                     news_list.append(news_data)
             except Exception as e:
                 self.logger.debug(f"뉴스 아이템 파싱 오류: {e}")
                 continue
 
+        self.logger.info(f"article 기반 추출로 {len(news_list)}개 수집 (캐시 필터링: {filtered_by_cache}개)")
         return news_list
     
     def _extract_google_news_data(self, article, keyword: str) -> Optional[Dict[str, Any]]:

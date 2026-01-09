@@ -7,7 +7,7 @@ import os
 import time
 import logging
 import requests
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from dataclasses import dataclass
 from datetime import datetime
 import re
@@ -90,13 +90,15 @@ class NaverNewsAPI:
             self.logger.error(f"네이버 뉴스 검색 중 오류: {e}")
             return {'items': [], 'total': 0, 'start': 1, 'display': 0}
     
-    def collect_latest_news(self, max_count: int = 100, category: str = None) -> List[Dict[str, Any]]:
+    def collect_latest_news(self, max_count: int = 100, category: str = None,
+                           exclude_links: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
         """
         최신 뉴스 수집 (키워드 없이 일반 뉴스 수집)
 
         Args:
             max_count: 수집할 최대 뉴스 개수
             category: 뉴스 카테고리 (선택)
+            exclude_links: 제외할 링크 집합 (중복 방지 캐시)
 
         Returns:
             수집된 뉴스 데이터 리스트
@@ -105,7 +107,10 @@ class NaverNewsAPI:
         general_keywords = ['뉴스', '한국', '속보']
         collected_news = []
 
-        self.logger.info(f"최신 뉴스 수집 시작 (최대 {max_count}개)")
+        if exclude_links is None:
+            exclude_links = set()
+
+        self.logger.info(f"최신 뉴스 수집 시작 (최대 {max_count}개, 캐시 제외 {len(exclude_links)}개)")
 
         # 여러 키워드로 분산 수집하여 다양성 확보
         count_per_keyword = max_count // len(general_keywords)
@@ -115,14 +120,15 @@ class NaverNewsAPI:
                 keyword=keyword,
                 max_count=count_per_keyword,
                 category=category,
-                filter_keyword=False  # 키워드 필터링 비활성화
+                filter_keyword=False,  # 키워드 필터링 비활성화
+                exclude_links=exclude_links  # 캐시 전달
             )
             collected_news.extend(news_list)
 
             if len(collected_news) >= max_count:
                 break
 
-        # 중복 제거 (original_link 기준)
+        # 중복 제거 (original_link 기준) - 메모리 내 중복
         seen_links = set()
         unique_news = []
         for news in collected_news:
@@ -136,7 +142,8 @@ class NaverNewsAPI:
         return result
 
     def collect_news_by_keyword(self, keyword: str, max_count: int = 100,
-                               category: str = None, filter_keyword: bool = True) -> List[Dict[str, Any]]:
+                               category: str = None, filter_keyword: bool = True,
+                               exclude_links: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
         """
         키워드로 뉴스 수집
 
@@ -145,6 +152,7 @@ class NaverNewsAPI:
             max_count: 수집할 최대 뉴스 개수
             category: 뉴스 카테고리 (선택)
             filter_keyword: 키워드 필터링 활성화 여부 (기본: True)
+            exclude_links: 제외할 링크 집합 (중복 방지 캐시)
 
         Returns:
             수집된 뉴스 데이터 리스트
@@ -153,8 +161,12 @@ class NaverNewsAPI:
         total_collected = 0
         current_start = 1
         consecutive_no_results = 0  # 연속으로 결과가 없는 횟수
+        filtered_by_cache = 0  # 캐시로 필터링된 개수
 
-        self.logger.info(f"키워드 '{keyword}' 뉴스 수집 시작 (최대 {max_count}개, 필터링: {filter_keyword})")
+        if exclude_links is None:
+            exclude_links = set()
+
+        self.logger.info(f"키워드 '{keyword}' 뉴스 수집 시작 (최대 {max_count}개, 필터링: {filter_keyword}, 캐시: {len(exclude_links)}개)")
 
         while total_collected < max_count and current_start <= 1000:
             # 부족한 개수 계산 (필터링을 고려하여 여유있게 요청)
@@ -191,6 +203,13 @@ class NaverNewsAPI:
                 if total_collected >= max_count:
                     break
 
+                # 캐시 기반 필터링 (엣지 케이스 3, 4 대응)
+                original_link = item.get('originallink', '')
+                if original_link in exclude_links:
+                    filtered_by_cache += 1
+                    self.logger.debug(f"캐시로 필터링됨: {original_link}")
+                    continue
+
                 processed_news = self._process_news_item(item, keyword, category, filter_keyword)
                 if processed_news:
                     collected_news.append(processed_news)
@@ -217,11 +236,17 @@ class NaverNewsAPI:
             # API 호출 제한 고려 (1초 대기)
             time.sleep(1.0)
 
-        self.logger.info(f"키워드 '{keyword}' 수집 완료: {len(collected_news)}개 (목표: {max_count}개)")
+        self.logger.info(
+            f"키워드 '{keyword}' 수집 완료: {len(collected_news)}개 "
+            f"(목표: {max_count}개, 캐시 필터링: {filtered_by_cache}개)"
+        )
 
         # 목표 개수에 미달한 경우 경고 로그
         if len(collected_news) < max_count:
-            self.logger.warning(f"목표 개수 미달: {len(collected_news)}/{max_count}개 수집")
+            self.logger.warning(
+                f"목표 개수 미달: {len(collected_news)}/{max_count}개 수집 "
+                f"(캐시 필터링으로 {filtered_by_cache}개 제외됨)"
+            )
 
         return collected_news
     
