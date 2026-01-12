@@ -171,14 +171,33 @@ class DatabaseManager:
             'total_processed': len(articles_data)
         }
     
-    def get_recent_news(self, limit: int = 10) -> List[NewsArticle]:
-        """최근 뉴스 조회"""
+    def get_recent_news(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """최근 뉴스 조회 (딕셔너리 형태로 반환)"""
         try:
             with self.get_session() as session:
-                return session.query(NewsArticle)\
+                articles = session.query(NewsArticle)\
                     .order_by(desc(NewsArticle.created_at))\
                     .limit(limit)\
                     .all()
+
+                # 세션이 닫히기 전에 딕셔너리로 변환
+                return [
+                    {
+                        'id': article.id,
+                        'title': article.title,
+                        'original_link': article.original_link,
+                        'link': article.link,
+                        'description': article.description,
+                        'pub_date': article.pub_date,
+                        'source': article.source,
+                        'keyword': article.keyword,
+                        'category': article.category,
+                        'is_duplicate': article.is_duplicate,
+                        'is_processed': article.is_processed,
+                        'created_at': article.created_at.isoformat() if article.created_at else None
+                    }
+                    for article in articles
+                ]
         except SQLAlchemyError as e:
             self.logger.error(f"뉴스 조회 실패: {e}")
             return []

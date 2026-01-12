@@ -160,11 +160,11 @@ def main():
             if args.trending:
                 print("🔥 인기 뉴스 수집 중...")
                 news_list = collector.get_trending_news(limit=args.count)
-                
+
                 if news_list:
                     print(f"✅ {len(news_list)}개의 인기 뉴스를 수집했습니다.")
                     for i, news in enumerate(news_list[:5], 1):
-                        print(f"{i}. {news.title[:50]}...")
+                        print(f"{i}. {news['title'][:50]}...")
                 else:
                     print("❌ 인기 뉴스를 수집하지 못했습니다.")
                 return

@@ -353,24 +353,25 @@ class NewsCollector:
     def get_trending_news(self, limit: int = 20) -> List[Dict[str, Any]]:
         """
         인기 키워드로 최신 뉴스 수집
-        
+
         Args:
             limit: 수집할 뉴스 개수
-            
+
         Returns:
-            최신 뉴스 리스트
+            최신 뉴스 리스트 (딕셔너리 형태)
         """
         trending_keywords = self.naver_api.get_trending_keywords()
-        
+
         if not trending_keywords:
             self.logger.warning("인기 키워드를 가져올 수 없습니다.")
             return []
-        
+
         # 첫 번째 인기 키워드로 뉴스 수집
         keyword = trending_keywords[0]
         result = self.collect_news_by_keyword(keyword, max_count=limit)
-        
+
         if result['success']:
+            # get_recent_news는 이제 딕셔너리 리스트를 반환
             return self.db_manager.get_recent_news(limit)
         else:
             return []

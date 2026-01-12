@@ -162,5 +162,5 @@ def continuous_collection(duration_hours=1):
 if __name__ == "__main__":
     print("\n🚀 NICL 연속 최신 뉴스 수집 시작...\n")
     # 연속 수집 테스트 시간
-    continuous_collection(duration_hours=4)
+    continuous_collection(duration_hours=3)
     print("\n✅ 프로그램 종료\n")
