@@ -98,7 +98,7 @@ class DatabaseManager:
                     session.commit()
                     return None
                 
-                # 새 뉴스 기사 생성
+                # 새 뉴스 기사 생성 (한국 시간 명시적 설정)
                 article = NewsArticle(
                     title=article_data.get('title', ''),
                     original_link=article_data.get('original_link', ''),
@@ -107,9 +107,10 @@ class DatabaseManager:
                     pub_date=article_data.get('pub_date', ''),
                     source=article_data.get('source', 'naver_api'),
                     keyword=article_data.get('keyword', ''),
-                    category=article_data.get('category', '')
+                    category=article_data.get('category', ''),
+                    created_at=datetime.now()  # 한국 시간 명시적 설정
                 )
-                
+
                 session.add(article)
                 session.flush()  # ID 생성을 위해 flush
                 
@@ -123,16 +124,16 @@ class DatabaseManager:
     def save_news_batch(self, articles_data: List[Dict[str, Any]]) -> Dict[str, int]:
         """
         뉴스 기사 배치 저장
-        
+
         Args:
             articles_data: 뉴스 기사 데이터 리스트
-            
+
         Returns:
             저장 결과 통계
         """
         saved_count = 0
         duplicate_count = 0
-        
+
         try:
             with self.get_session() as session:
                 for article_data in articles_data:
@@ -140,12 +141,12 @@ class DatabaseManager:
                     existing = session.query(NewsArticle).filter_by(
                         original_link=article_data.get('original_link')
                     ).first()
-                    
+
                     if existing:
                         duplicate_count += 1
                         continue
-                    
-                    # 새 뉴스 기사 생성
+
+                    # 새 뉴스 기사 생성 (한국 시간 명시적 설정)
                     article = NewsArticle(
                         title=article_data.get('title', ''),
                         original_link=article_data.get('original_link', ''),
@@ -154,7 +155,8 @@ class DatabaseManager:
                         pub_date=article_data.get('pub_date', ''),
                         source=article_data.get('source', 'naver_api'),
                         keyword=article_data.get('keyword', ''),
-                        category=article_data.get('category', '')
+                        category=article_data.get('category', ''),
+                        created_at=datetime.now()  # 한국 시간 명시적 설정
                     )
                     
                     session.add(article)

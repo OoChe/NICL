@@ -67,8 +67,8 @@ class NewsCollector:
 
             # 최근 수집된 뉴스 링크 캐시 조회 (중복 방지)
             recent_links = self.db_manager.get_recent_links(
-                minutes_ago=2,  # 2분 버퍼 (15초 주기 고려)
-                max_records=500  # 메모리 보호 (엣지 케이스 4)
+                minutes_ago=1440,  # 24시간 (하루치 뉴스 캐시)
+                max_records=5000  # 충분한 메모리 할당
             )
             self.logger.info(f"중복 방지 캐시: {len(recent_links)}개 링크 로드")
 

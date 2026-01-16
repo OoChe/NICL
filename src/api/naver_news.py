@@ -103,8 +103,8 @@ class NaverNewsAPI:
         Returns:
             수집된 뉴스 데이터 리스트
         """
-        # 일반적인 뉴스 키워드로 최신 뉴스 수집
-        general_keywords = ['뉴스', '한국', '속보']
+        # 일반적인 뉴스 키워드로 최신 뉴스 수집 (다양화로 중복 확률 감소)
+        general_keywords = ['뉴스', '한국', '속보', '최신', '오늘', '사회']
         collected_news = []
 
         if exclude_links is None:
@@ -124,6 +124,12 @@ class NaverNewsAPI:
                 exclude_links=exclude_links  # 캐시 전달
             )
             collected_news.extend(news_list)
+
+            # 수집된 링크들을 캐시에 추가하여 다음 키워드에서 중복 방지
+            for news in news_list:
+                link = news.get('original_link')
+                if link:
+                    exclude_links.add(link)
 
             if len(collected_news) >= max_count:
                 break
@@ -172,11 +178,11 @@ class NaverNewsAPI:
             # 부족한 개수 계산 (필터링을 고려하여 여유있게 요청)
             remaining = max_count - total_collected
 
-            # 필터링이 활성화된 경우 더 많이 요청 (약 50% 여유)
+            # 필터링이 활성화된 경우 더 많이 요청 (중복/필터링 고려하여 2배 여유)
             if filter_keyword:
-                display_count = min(100, int(remaining * 1.5))
+                display_count = min(100, int(remaining * 2.0))
             else:
-                display_count = min(100, remaining)
+                display_count = min(100, int(remaining * 1.5))
 
             # 검색 파라미터 설정
             params = NaverNewsSearchParams(
@@ -221,9 +227,9 @@ class NaverNewsAPI:
                 consecutive_no_results += 1
                 self.logger.debug(f"이번 배치에서 수집 없음 (연속 {consecutive_no_results}회)")
 
-                # 3회 연속 수집 실패 시 중단
-                if consecutive_no_results >= 3:
-                    self.logger.warning("연속 3회 수집 실패로 중단합니다.")
+                # 5회 연속 수집 실패 시 중단 (적절한 시도 후 다음 키워드로)
+                if consecutive_no_results >= 5:
+                    self.logger.warning("연속 5회 수집 실패로 중단합니다.")
                     break
             else:
                 # 수집 성공 시 카운트 리셋
