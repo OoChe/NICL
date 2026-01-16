@@ -34,7 +34,6 @@ class NewsArticle(Base):
     # 시스템 필드
     created_at = Column(DateTime, default=func.now(), comment='수집 시간')
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    is_processed = Column(Boolean, default=False, comment='처리 완료 여부')
     is_duplicate = Column(Boolean, default=False, comment='중복 여부')
     
     def __repr__(self):
@@ -54,7 +53,6 @@ class NewsArticle(Base):
             'category': self.category,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'is_processed': self.is_processed,
             'is_duplicate': self.is_duplicate
         }
 

@@ -114,7 +114,8 @@ python main.py --validate
 - `title`, `original_link` (used for dedup), `link`, `description`, `pub_date`
 - `source`: 'naver_api', 'web_crawling', or 'google_crawling'
 - `keyword`, `category`: search metadata
-- `is_duplicate`, `is_processed`: status flags
+- `created_at`, `updated_at`: timestamp fields
+- `is_duplicate`: duplicate status flag
 
 **CollectionLog** table:
 - Logs each collection run with `source`, `keyword`, `total_collected`, `duplicates_found`, `success`, `error_message`, `execution_time`

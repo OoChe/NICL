@@ -195,7 +195,6 @@ class DatabaseManager:
                         'keyword': article.keyword,
                         'category': article.category,
                         'is_duplicate': article.is_duplicate,
-                        'is_processed': article.is_processed,
                         'created_at': article.created_at.isoformat() if article.created_at else None
                     }
                     for article in articles
